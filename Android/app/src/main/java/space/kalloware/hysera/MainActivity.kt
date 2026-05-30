@@ -10,20 +10,21 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import space.kalloware.hysera.config.SavedConfig
 import space.kalloware.hysera.ui.HyseraApp
 import space.kalloware.hysera.ui.HyseraViewModel
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<HyseraViewModel>()
-    private var pendingVpnConfigId: String? = null
+    private var pendingVpnConfig: SavedConfig? = null
 
     private val vpnPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult(),
     ) { result ->
-        val configId = pendingVpnConfigId
-        pendingVpnConfigId = null
-        if (result.resultCode == Activity.RESULT_OK && configId != null) {
-            viewModel.startVpn(configId)
+        val config = pendingVpnConfig
+        pendingVpnConfig = null
+        if (result.resultCode == Activity.RESULT_OK && config != null) {
+            viewModel.startVpn(config)
         } else {
             viewModel.onVpnPermissionDenied()
         }
@@ -46,12 +47,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun requestVpnPermission(configId: String) {
+    private fun requestVpnPermission(config: SavedConfig) {
         val permissionIntent = VpnService.prepare(this)
         if (permissionIntent == null) {
-            viewModel.startVpn(configId)
+            viewModel.startVpn(config)
         } else {
-            pendingVpnConfigId = configId
+            pendingVpnConfig = config
             vpnPermissionLauncher.launch(permissionIntent)
         }
     }

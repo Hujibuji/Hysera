@@ -45,7 +45,7 @@ The workflow builds `Android/app`, copies the resulting debug APK to `Release/Hy
 
 ## Subscription support
 
-Hysera uses one importer on the **Hysera Configs** screen for standalone `protocol://` links, JSON configs, HTTP(S) subscription URLs, and raw subscription text. Subscription data is downloaded directly by the app and stored locally. Hysera does not send configs to third-party parsing services.
+Hysera uses the **+** button in the top-left corner of the main and config screens for standalone `protocol://` links, JSON configs, HTTP(S) subscription URLs, and raw subscription text. The menu can import directly from the clipboard or open a manual-entry dialog. Subscription data is downloaded directly by the app and stored locally. Hysera does not send configs to third-party parsing services.
 
 Supported metadata header lines:
 
@@ -70,7 +70,7 @@ VPN nodes after the metadata lines may use:
 - sing-box JSON;
 - Xray JSON.
 
-Use **Check input** to preview parsing results and **Import** to save a standalone config or subscription. Saved URL-based subscriptions have an **Update** button for manual refresh. Both standalone configs and saved subscription links have a visible **Delete** button. The parsed `#profile-update-interval` value is stored with each profile; periodic WorkManager scheduling remains an explicit TODO and defaults conceptually to 24 hours when the metadata header is absent.
+Tap a subscription title and its arrow to expand or collapse its nodes. Tap a node to select it, then use the main-screen connect button without creating a separate standalone config. Saved URL-based subscriptions have an **Update** button for manual refresh. Both standalone configs and saved subscription links have a visible delete control. The parsed `#profile-update-interval` value is stored with each profile; periodic WorkManager scheduling remains an explicit TODO and defaults conceptually to 24 hours when the metadata header is absent.
 
 ## Adding native cores
 

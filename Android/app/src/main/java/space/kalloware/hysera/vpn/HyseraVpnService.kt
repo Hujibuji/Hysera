@@ -13,7 +13,8 @@ import android.os.ParcelFileDescriptor
 import space.kalloware.hysera.MainActivity
 import space.kalloware.hysera.R
 import space.kalloware.hysera.config.ConfigDetector
-import space.kalloware.hysera.config.ConfigRepository
+import space.kalloware.hysera.config.CoreType
+import space.kalloware.hysera.config.SavedConfig
 import space.kalloware.hysera.logging.EventLogger
 import space.kalloware.hysera.vpn.core.CoreEngine
 import space.kalloware.hysera.vpn.core.CoreEngineFactory
@@ -24,7 +25,7 @@ class HyseraVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_CONNECT -> connect(intent.getStringExtra(EXTRA_CONFIG_ID))
+            ACTION_CONNECT -> connect(intent?.toSavedConfig())
             ACTION_DISCONNECT -> disconnect()
         }
         return START_NOT_STICKY
@@ -38,7 +39,7 @@ class HyseraVpnService : VpnService() {
         super.onDestroy()
     }
 
-    private fun connect(configId: String?) {
+    private fun connect(config: SavedConfig?) {
         releaseResources()
         VpnStateStore.publish(
             VpnConnectionState(
@@ -52,13 +53,13 @@ class HyseraVpnService : VpnService() {
         startHyseraForeground()
 
         try {
-            val config = requireNotNull(configId?.let(ConfigRepository(this)::findById)) {
-                "Select a saved config before connecting."
+            val selectedConfig = requireNotNull(config) {
+                "Select a config or subscription node before connecting."
             }
-            val detection = ConfigDetector.detect(config.rawConfig)
+            val detection = ConfigDetector.detect(selectedConfig.rawConfig)
             require(detection.isSupported) { detection.explanation }
 
-            val selectedCore = ConfigDetector.resolveCore(config)
+            val selectedCore = ConfigDetector.resolveCore(selectedConfig)
             val establishedTun = Builder()
                 .setSession("Hysera")
                 .setMtu(1500)
@@ -68,17 +69,17 @@ class HyseraVpnService : VpnService() {
 
             tunInterface = establishedTun
             coreEngine = CoreEngineFactory.create(selectedCore)
-            val launch = coreEngine!!.start(config, establishedTun.fd)
+            val launch = coreEngine!!.start(selectedConfig, establishedTun.fd)
 
             VpnStateStore.publish(
                 VpnConnectionState(
                     status = VpnStatus.CONNECTED,
-                    configName = config.name,
+                    configName = selectedConfig.name,
                     coreType = selectedCore,
                     detail = launch.detail,
                 ),
             )
-            EventLogger.info("Hysera TUN placeholder is active for '${config.name}'.")
+            EventLogger.info("Hysera TUN placeholder is active for '${selectedConfig.name}'.")
         } catch (exception: Exception) {
             fail(exception.message ?: "Could not start Hysera VPN.")
         }
@@ -163,16 +164,38 @@ class HyseraVpnService : VpnService() {
         private const val ACTION_CONNECT = "space.kalloware.hysera.action.CONNECT"
         private const val ACTION_DISCONNECT = "space.kalloware.hysera.action.DISCONNECT"
         private const val EXTRA_CONFIG_ID = "config_id"
+        private const val EXTRA_CONFIG_NAME = "config_name"
+        private const val EXTRA_RAW_CONFIG = "raw_config"
+        private const val EXTRA_PREFERRED_CORE = "preferred_core"
         private const val NOTIFICATION_CHANNEL_ID = "hysera_vpn"
         private const val NOTIFICATION_ID = 1001
 
-        fun connectIntent(context: Context, configId: String) =
+        fun connectIntent(context: Context, config: SavedConfig) =
             Intent(context, HyseraVpnService::class.java)
                 .setAction(ACTION_CONNECT)
-                .putExtra(EXTRA_CONFIG_ID, configId)
+                .putExtra(EXTRA_CONFIG_ID, config.id)
+                .putExtra(EXTRA_CONFIG_NAME, config.name)
+                .putExtra(EXTRA_RAW_CONFIG, config.rawConfig)
+                .putExtra(EXTRA_PREFERRED_CORE, config.preferredCore.name)
 
         fun disconnectIntent(context: Context) =
             Intent(context, HyseraVpnService::class.java)
                 .setAction(ACTION_DISCONNECT)
+    }
+
+    private fun Intent.toSavedConfig(): SavedConfig? {
+        val id = getStringExtra(EXTRA_CONFIG_ID) ?: return null
+        val name = getStringExtra(EXTRA_CONFIG_NAME) ?: return null
+        val rawConfig = getStringExtra(EXTRA_RAW_CONFIG) ?: return null
+        val preferredCore = getStringExtra(EXTRA_PREFERRED_CORE)
+            ?.let { value -> runCatching { CoreType.valueOf(value) }.getOrNull() }
+            ?: CoreType.AUTO
+        return SavedConfig(
+            id = id,
+            name = name,
+            rawConfig = rawConfig,
+            preferredCore = preferredCore,
+            createdAtMillis = 0L,
+        )
     }
 }

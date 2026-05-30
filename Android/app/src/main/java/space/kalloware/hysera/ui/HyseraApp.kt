@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,6 +26,8 @@ import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
@@ -34,15 +37,17 @@ import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -54,6 +59,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -82,7 +88,6 @@ import space.kalloware.hysera.logging.EventLogger
 import space.kalloware.hysera.logging.LogEntry
 import space.kalloware.hysera.subscription.SubscriptionMetadata
 import space.kalloware.hysera.subscription.SubscriptionNode
-import space.kalloware.hysera.subscription.SubscriptionParseResult
 import space.kalloware.hysera.subscription.SubscriptionProfile
 import space.kalloware.hysera.subscription.SubscriptionUserInfo
 import space.kalloware.hysera.ui.theme.HyseraTheme
@@ -103,19 +108,21 @@ private enum class HyseraDestination(
 @Composable
 fun HyseraApp(
     viewModel: HyseraViewModel,
-    requestVpnPermission: (String) -> Unit,
+    requestVpnPermission: (SavedConfig) -> Unit,
 ) {
     val configs by viewModel.configs.collectAsStateWithLifecycle()
     val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
-    val selectedConfigId by viewModel.selectedConfigId.collectAsStateWithLifecycle()
+    val selectedTarget by viewModel.selectedTarget.collectAsStateWithLifecycle()
     val vpnState by viewModel.vpnState.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
-    val subscriptionPreview by viewModel.subscriptionPreview.collectAsStateWithLifecycle()
     val subscriptionBusy by viewModel.subscriptionBusy.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
+    val clipboardManager = LocalClipboardManager.current
     var destination by rememberSaveable { mutableStateOf(HyseraDestination.HOME) }
+    var showImportMenu by remember { mutableStateOf(false) }
+    var showManualImport by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(uiMessage) {
         uiMessage?.let { message ->
@@ -127,7 +134,48 @@ fun HyseraApp(
     HyseraTheme(darkTheme = darkTheme) {
         Scaffold(
             topBar = {
-                TopAppBar(title = { Text(destination.title) })
+                TopAppBar(
+                    title = { Text(destination.title) },
+                    navigationIcon = {
+                        if (
+                            destination == HyseraDestination.HOME ||
+                            destination == HyseraDestination.CONFIGS
+                        ) {
+                            Box {
+                                IconButton(onClick = { showImportMenu = true }) {
+                                    Icon(Icons.Default.Add, contentDescription = "Add config or subscription")
+                                }
+                                DropdownMenu(
+                                    expanded = showImportMenu,
+                                    onDismissRequest = { showImportMenu = false },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Import from clipboard") },
+                                        leadingIcon = {
+                                            Icon(Icons.Default.ContentPaste, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            showImportMenu = false
+                                            viewModel.importEntry(
+                                                name = "",
+                                                rawInput = clipboardManager.getText()?.text.orEmpty(),
+                                                preferredCore = CoreType.AUTO,
+                                            )
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Enter manually") },
+                                        leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null) },
+                                        onClick = {
+                                            showImportMenu = false
+                                            showManualImport = true
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    },
+                )
             },
             bottomBar = {
                 NavigationBar {
@@ -146,7 +194,7 @@ fun HyseraApp(
             when (destination) {
                 HyseraDestination.HOME -> HomeScreen(
                     vpnState = vpnState,
-                    selectedConfig = configs.firstOrNull { it.id == selectedConfigId },
+                    selectedConfig = selectedTarget,
                     connect = { viewModel.connectSelected(requestVpnPermission) },
                     disconnect = viewModel::disconnectVpn,
                     contentPadding = contentPadding,
@@ -155,16 +203,13 @@ fun HyseraApp(
                 HyseraDestination.CONFIGS -> ConfigsScreen(
                     configs = configs,
                     profiles = subscriptions,
-                    preview = subscriptionPreview,
                     busy = subscriptionBusy,
-                    selectedConfigId = selectedConfigId,
+                    selectedTargetId = selectedTarget?.id,
                     selectConfig = viewModel::selectConfig,
                     deleteConfig = viewModel::deleteConfig,
-                    checkImport = viewModel::checkImport,
-                    importEntry = viewModel::importEntry,
                     refreshSubscription = viewModel::refreshSubscription,
                     deleteSubscription = viewModel::deleteSubscription,
-                    saveNode = viewModel::saveSubscriptionNode,
+                    selectNode = viewModel::selectSubscriptionNode,
                     contentPadding = contentPadding,
                 )
 
@@ -179,6 +224,16 @@ fun HyseraApp(
                     contentPadding = contentPadding,
                 )
             }
+        }
+        if (showManualImport) {
+            ManualImportDialog(
+                busy = subscriptionBusy,
+                dismiss = { showManualImport = false },
+                importEntry = { name, rawInput, preferredCore ->
+                    showManualImport = false
+                    viewModel.importEntry(name, rawInput, preferredCore)
+                },
+            )
         }
     }
 }
@@ -305,20 +360,16 @@ private fun NativeCoreNotice() {
 private fun ConfigsScreen(
     configs: List<SavedConfig>,
     profiles: List<SubscriptionProfile>,
-    preview: SubscriptionParseResult?,
     busy: Boolean,
-    selectedConfigId: String?,
+    selectedTargetId: String?,
     selectConfig: (String) -> Unit,
     deleteConfig: (String) -> Unit,
-    checkImport: (String) -> Unit,
-    importEntry: (String, String, CoreType) -> Unit,
     refreshSubscription: (String) -> Unit,
     deleteSubscription: (String) -> Unit,
-    saveNode: (SubscriptionNode) -> Unit,
+    selectNode: (String, SubscriptionNode) -> Unit,
     contentPadding: PaddingValues,
 ) {
-    var showForm by rememberSaveable { mutableStateOf(configs.isEmpty() && profiles.isEmpty()) }
-    var expandedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+    var expandedProfileIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
 
     LazyColumn(
         modifier = Modifier
@@ -328,33 +379,10 @@ private fun ConfigsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Hysera configs and subscriptions",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    "Add protocol:// links, JSON configs, HTTPS subscription URLs, or raw subscription text here.",
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-        }
-        item {
-            ExtendedFloatingActionButton(
-                onClick = { showForm = !showForm },
-                icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                text = { Text(if (showForm) "Close importer" else "Add config or subscription") },
+            Text(
+                "Tap + above to import from the clipboard or enter a config manually.",
+                style = MaterialTheme.typography.bodySmall,
             )
-        }
-        if (showForm) {
-            item {
-                UnifiedImportForm(
-                    busy = busy,
-                    checkImport = checkImport,
-                    importEntry = importEntry,
-                )
-            }
         }
         item {
             Text("Saved VPN configs", style = MaterialTheme.typography.titleMedium)
@@ -367,7 +395,7 @@ private fun ConfigsScreen(
         items(configs, key = SavedConfig::id) { config ->
             ConfigCard(
                 config = config,
-                selected = config.id == selectedConfigId,
+                selected = config.id == selectedTargetId,
                 select = { selectConfig(config.id) },
                 delete = { deleteConfig(config.id) },
             )
@@ -381,20 +409,20 @@ private fun ConfigsScreen(
         items(profiles, key = SubscriptionProfile::id) { profile ->
             SubscriptionProfileCard(
                 profile = profile,
-                expanded = expandedProfileId == profile.id,
+                expanded = profile.id in expandedProfileIds,
                 busy = busy,
+                selectedTargetId = selectedTargetId,
                 toggleNodes = {
-                    expandedProfileId = if (expandedProfileId == profile.id) null else profile.id
+                    expandedProfileIds = if (profile.id in expandedProfileIds) {
+                        expandedProfileIds - profile.id
+                    } else {
+                        expandedProfileIds + profile.id
+                    }
                 },
                 refresh = { refreshSubscription(profile.id) },
                 delete = { deleteSubscription(profile.id) },
-                saveNode = saveNode,
+                selectNode = { node -> selectNode(profile.id, node) },
             )
-        }
-        preview?.let { result ->
-            item {
-                SubscriptionPreviewCard(result)
-            }
         }
     }
 }
@@ -427,91 +455,82 @@ private fun ConfigCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            OutlinedButton(onClick = delete) {
-                Icon(Icons.Default.Delete, contentDescription = null)
-                Spacer(Modifier.size(6.dp))
-                Text("Delete")
+            IconButton(onClick = delete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete config")
             }
         }
     }
 }
 
 @Composable
-private fun UnifiedImportForm(
+private fun ManualImportDialog(
     busy: Boolean,
-    checkImport: (String) -> Unit,
+    dismiss: () -> Unit,
     importEntry: (String, String, CoreType) -> Unit,
 ) {
     var name by rememberSaveable { mutableStateOf("") }
     var rawInput by rememberSaveable { mutableStateOf("") }
     var preferredCore by rememberSaveable { mutableStateOf(CoreType.AUTO) }
-    val clipboardManager = LocalClipboardManager.current
 
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Add to Hysera", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Use one field for a standalone config or a subscription. HTTPS links are downloaded directly by Hysera.",
-                style = MaterialTheme.typography.bodySmall,
-            )
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Config name (optional)") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = rawInput,
-                onValueChange = { rawInput = it },
-                label = { Text("Config, subscription URL, or raw text") },
-                minLines = 6,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            AssistChip(
-                onClick = {
-                    clipboardManager.getText()?.text?.let { clipboardText ->
-                        rawInput = clipboardText
+    AlertDialog(
+        onDismissRequest = dismiss,
+        title = { Text("Add to Hysera") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    "Enter JSON, a protocol:// config, an HTTPS subscription URL, or raw subscription text.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                OutlinedTextField(
+                    value = name,
+                    onValueChange = { name = it },
+                    label = { Text("Config name (optional)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = rawInput,
+                    onValueChange = { rawInput = it },
+                    label = { Text("Config, URL, or raw text") },
+                    minLines = 5,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Text("Standalone config core", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    CoreType.entries.forEach { core ->
+                        FilterChip(
+                            selected = preferredCore == core,
+                            onClick = { preferredCore = core },
+                            label = { Text(core.displayName) },
+                            modifier = Modifier.weight(1f),
+                        )
                     }
-                },
-                label = { Text("Import from clipboard") },
-                leadingIcon = { Icon(Icons.Default.ContentPaste, contentDescription = null) },
-            )
-            Text("Core preference for a standalone config", style = MaterialTheme.typography.labelLarge)
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                CoreType.entries.forEach { core ->
-                    FilterChip(
-                        selected = preferredCore == core,
-                        onClick = { preferredCore = core },
-                        label = { Text(core.displayName) },
+                }
+                if (busy) {
+                    Text(
+                        "Hysera is loading subscription data...",
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { checkImport(rawInput) },
-                    enabled = !busy,
-                ) {
-                    Text("Check input")
-                }
-                Button(
-                    onClick = { importEntry(name, rawInput, preferredCore) },
-                    enabled = !busy,
-                ) {
-                    Text("Import")
-                }
+        },
+        confirmButton = {
+            Button(
+                onClick = { importEntry(name, rawInput, preferredCore) },
+                enabled = !busy && rawInput.isNotBlank(),
+            ) {
+                Text("Import")
             }
-            if (busy) {
-                Text("Hysera is loading subscription data...", style = MaterialTheme.typography.bodySmall)
+        },
+        dismissButton = {
+            TextButton(onClick = dismiss) {
+                Text("Cancel")
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable
@@ -519,10 +538,11 @@ private fun SubscriptionProfileCard(
     profile: SubscriptionProfile,
     expanded: Boolean,
     busy: Boolean,
+    selectedTargetId: String?,
     toggleNodes: () -> Unit,
     refresh: () -> Unit,
     delete: () -> Unit,
-    saveNode: (SubscriptionNode) -> Unit,
+    selectNode: (SubscriptionNode) -> Unit,
 ) {
     val context = LocalContext.current
     Card(modifier = Modifier.fillMaxWidth()) {
@@ -530,7 +550,22 @@ private fun SubscriptionProfileCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text(profile.name, style = MaterialTheme.typography.titleMedium)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = toggleNodes),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    profile.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse subscription" else "Expand subscription",
+                )
+            }
             Text(
                 "${profile.nodes.size} node(s) | Refresh interval: ${profile.updateIntervalHours} hour(s)",
                 style = MaterialTheme.typography.bodySmall,
@@ -568,21 +603,24 @@ private fun SubscriptionProfileCard(
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedButton(
                     onClick = refresh,
                     enabled = !busy && profile.sourceUrl != null,
+                    modifier = Modifier.weight(1f),
                 ) {
                     Icon(Icons.Default.Refresh, contentDescription = null)
                     Spacer(Modifier.size(6.dp))
                     Text("Update")
                 }
-                OutlinedButton(onClick = toggleNodes) {
-                    Icon(Icons.Default.ExpandMore, contentDescription = null)
-                    Spacer(Modifier.size(6.dp))
-                    Text("Nodes")
-                }
-                OutlinedButton(onClick = delete, enabled = !busy) {
+                OutlinedButton(
+                    onClick = delete,
+                    enabled = !busy,
+                    modifier = Modifier.weight(1f),
+                ) {
                     Icon(Icons.Default.Delete, contentDescription = null)
                     Spacer(Modifier.size(6.dp))
                     Text("Delete")
@@ -592,7 +630,11 @@ private fun SubscriptionProfileCard(
             if (expanded) {
                 HorizontalDivider()
                 profile.nodes.forEach { node ->
-                    SubscriptionNodeRow(node = node, saveNode = { saveNode(node) })
+                    SubscriptionNodeRow(
+                        node = node,
+                        selected = selectedTargetId == subscriptionNodeId(profile.id, node.id),
+                        select = { selectNode(node) },
+                    )
                 }
             }
         }
@@ -604,16 +646,25 @@ private fun SubscriptionLinks(metadata: SubscriptionMetadata, context: Context) 
     if (metadata.supportUrl == null && metadata.profileWebPageUrl == null) {
         return
     }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
         metadata.supportUrl?.let { url ->
-            OutlinedButton(onClick = { openExternalUrl(context, url) }) {
+            OutlinedButton(
+                onClick = { openExternalUrl(context, url) },
+                modifier = Modifier.weight(1f),
+            ) {
                 Icon(Icons.Default.OpenInNew, contentDescription = null)
                 Spacer(Modifier.size(6.dp))
                 Text("Support")
             }
         }
         metadata.profileWebPageUrl?.let { url ->
-            OutlinedButton(onClick = { openExternalUrl(context, url) }) {
+            OutlinedButton(
+                onClick = { openExternalUrl(context, url) },
+                modifier = Modifier.weight(1f),
+            ) {
                 Icon(Icons.Default.OpenInNew, contentDescription = null)
                 Spacer(Modifier.size(6.dp))
                 Text("Profile page")
@@ -623,34 +674,33 @@ private fun SubscriptionLinks(metadata: SubscriptionMetadata, context: Context) 
 }
 
 @Composable
-private fun SubscriptionNodeRow(node: SubscriptionNode, saveNode: () -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(node.name, fontWeight = FontWeight.Medium)
-        Text(
-            "${node.format.displayName} | ${node.suggestedCore?.displayName ?: "Unsupported"}",
-            style = MaterialTheme.typography.bodySmall,
+private fun SubscriptionNodeRow(
+    node: SubscriptionNode,
+    selected: Boolean,
+    select: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = node.isValid, onClick = select)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(
+            selected = selected,
+            onClick = select.takeIf { node.isValid },
+            enabled = node.isValid,
         )
-        OutlinedButton(onClick = saveNode) {
-            Text("Save as config")
-        }
-        HorizontalDivider()
-    }
-}
-
-@Composable
-private fun SubscriptionPreviewCard(result: SubscriptionParseResult) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text("Subscription preview", style = MaterialTheme.typography.titleMedium)
-            Text("Title: ${result.metadata.profileTitle ?: "Untitled subscription"}")
-            Text("Valid nodes: ${result.validNodes.size}")
-            Text("Warnings: ${result.errors.size}")
-            result.metadata.announce?.let { Text("Announcement: $it") }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(node.name, fontWeight = FontWeight.Medium)
+            Text(
+                "${node.format.displayName} | ${node.suggestedCore?.displayName ?: "Unsupported"}",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
+    HorizontalDivider()
 }
 
 @Composable
@@ -692,6 +742,8 @@ private fun formatBytes(value: Long?): String {
         "%.1f %s".format(amount, units[unitIndex])
     }
 }
+
+private fun subscriptionNodeId(profileId: String, nodeId: String) = "subscription:$profileId:$nodeId"
 
 private fun formatTrafficLimit(total: Long?): String {
     return when {
