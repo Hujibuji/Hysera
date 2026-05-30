@@ -1,0 +1,4 @@
+Android/gradlew text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.kts text eol=lf

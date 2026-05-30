@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Hysera</string>
+    <string name="notification_channel_name">Hysera VPN</string>
+    <string name="notification_channel_description">Hysera foreground VPN service</string>
+    <string name="notification_title">Hysera VPN is running</string>
+    <string name="notification_text">TUN placeholder is active. Native traffic routing is not installed yet.</string>
+</resources>

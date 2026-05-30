@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Fallback only. TODO: Restore Brand/hysera-logo.png if the canonical PNG is ever absent. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="128dp"
+    android:height="128dp"
+    android:viewportWidth="128"
+    android:viewportHeight="128">
+    <path
+        android:fillColor="#0D1B2A"
+        android:pathData="M64,6L112,24V57C112,88 92,111 64,122C36,111 16,88 16,57V24L64,6Z" />
+    <path
+        android:fillColor="#5EEAD4"
+        android:pathData="M37,34H50V57H78V34H91V94H78V69H50V94H37V34Z" />
+</vector>
