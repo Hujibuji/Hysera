@@ -1,5 +1,8 @@
 package space.kalloware.hysera.ui
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,12 +25,17 @@ import androidx.compose.material.icons.filled.Article
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.List
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Subscriptions
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -41,6 +49,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
@@ -60,6 +69,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,7 +81,13 @@ import space.kalloware.hysera.R
 import space.kalloware.hysera.config.ConfigDetector
 import space.kalloware.hysera.config.CoreType
 import space.kalloware.hysera.config.SavedConfig
+import space.kalloware.hysera.logging.EventLogger
 import space.kalloware.hysera.logging.LogEntry
+import space.kalloware.hysera.subscription.SubscriptionMetadata
+import space.kalloware.hysera.subscription.SubscriptionNode
+import space.kalloware.hysera.subscription.SubscriptionParseResult
+import space.kalloware.hysera.subscription.SubscriptionProfile
+import space.kalloware.hysera.subscription.SubscriptionUserInfo
 import space.kalloware.hysera.ui.theme.HyseraTheme
 import space.kalloware.hysera.vpn.VpnConnectionState
 import space.kalloware.hysera.vpn.VpnStatus
@@ -82,6 +98,7 @@ private enum class HyseraDestination(
 ) {
     HOME("Hysera", Icons.Default.Home),
     CONFIGS("Hysera Configs", Icons.Default.List),
+    SUBSCRIPTIONS("Hysera Subscriptions", Icons.Default.Subscriptions),
     LOGS("Hysera Logs", Icons.Default.Article),
     SETTINGS("Hysera Settings", Icons.Default.Settings),
 }
@@ -93,11 +110,14 @@ fun HyseraApp(
     requestVpnPermission: (String) -> Unit,
 ) {
     val configs by viewModel.configs.collectAsStateWithLifecycle()
+    val subscriptions by viewModel.subscriptions.collectAsStateWithLifecycle()
     val selectedConfigId by viewModel.selectedConfigId.collectAsStateWithLifecycle()
     val vpnState by viewModel.vpnState.collectAsStateWithLifecycle()
     val logs by viewModel.logs.collectAsStateWithLifecycle()
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
     val uiMessage by viewModel.uiMessage.collectAsStateWithLifecycle()
+    val subscriptionPreview by viewModel.subscriptionPreview.collectAsStateWithLifecycle()
+    val subscriptionBusy by viewModel.subscriptionBusy.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     var destination by rememberSaveable { mutableStateOf(HyseraDestination.HOME) }
 
@@ -142,6 +162,18 @@ fun HyseraApp(
                     selectConfig = viewModel::selectConfig,
                     deleteConfig = viewModel::deleteConfig,
                     saveConfig = viewModel::saveConfig,
+                    contentPadding = contentPadding,
+                )
+
+                HyseraDestination.SUBSCRIPTIONS -> SubscriptionsScreen(
+                    profiles = subscriptions,
+                    preview = subscriptionPreview,
+                    busy = subscriptionBusy,
+                    checkSubscription = viewModel::checkSubscription,
+                    importSubscription = viewModel::importSubscription,
+                    refreshSubscription = viewModel::refreshSubscription,
+                    deleteSubscription = viewModel::deleteSubscription,
+                    saveNode = viewModel::saveSubscriptionNode,
                     contentPadding = contentPadding,
                 )
 
@@ -429,6 +461,354 @@ private fun AddConfigForm(
                 Text("Save config")
             }
         }
+    }
+}
+
+@Composable
+private fun SubscriptionsScreen(
+    profiles: List<SubscriptionProfile>,
+    preview: SubscriptionParseResult?,
+    busy: Boolean,
+    checkSubscription: (String, String) -> Unit,
+    importSubscription: (String, String) -> Unit,
+    refreshSubscription: (String) -> Unit,
+    deleteSubscription: (String) -> Unit,
+    saveNode: (SubscriptionNode) -> Unit,
+    contentPadding: PaddingValues,
+) {
+    var showForm by rememberSaveable { mutableStateOf(profiles.isEmpty()) }
+    var expandedProfileId by rememberSaveable { mutableStateOf<String?>(null) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(contentPadding),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Hysera subscription profiles",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    "Import a subscription URL or raw subscription text. Metadata and VPN nodes stay local.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+        if (profiles.isEmpty()) {
+            item { Text("No subscriptions saved yet.") }
+        }
+        items(profiles, key = SubscriptionProfile::id) { profile ->
+            SubscriptionProfileCard(
+                profile = profile,
+                expanded = expandedProfileId == profile.id,
+                busy = busy,
+                toggleNodes = {
+                    expandedProfileId = if (expandedProfileId == profile.id) null else profile.id
+                },
+                refresh = { refreshSubscription(profile.id) },
+                delete = { deleteSubscription(profile.id) },
+                saveNode = saveNode,
+            )
+        }
+        item {
+            ExtendedFloatingActionButton(
+                onClick = { showForm = !showForm },
+                icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                text = { Text(if (showForm) "Close subscription editor" else "Add subscription") },
+            )
+        }
+        if (showForm) {
+            item {
+                SubscriptionImportForm(
+                    busy = busy,
+                    checkSubscription = checkSubscription,
+                    importSubscription = importSubscription,
+                )
+            }
+        }
+        preview?.let { result ->
+            item { SubscriptionPreviewCard(result) }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionProfileCard(
+    profile: SubscriptionProfile,
+    expanded: Boolean,
+    busy: Boolean,
+    toggleNodes: () -> Unit,
+    refresh: () -> Unit,
+    delete: () -> Unit,
+    saveNode: (SubscriptionNode) -> Unit,
+) {
+    val context = LocalContext.current
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(profile.name, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "${profile.nodes.size} node(s) | Refresh interval: ${profile.updateIntervalHours} hour(s)",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Text(
+                "Last updated: ${formatOptionalDate(profile.lastUpdatedAtMillis)}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            SubscriptionUsage(profile.metadata.userInfo)
+            profile.metadata.announce?.takeIf(String::isNotBlank)?.let { announcement ->
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                ) {
+                    Text(
+                        text = announcement,
+                        modifier = Modifier.padding(12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+            profile.lastUpdateError?.let { error ->
+                Text(
+                    text = "Last update warning: $error",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            profile.sourceUrl?.let { sourceUrl ->
+                Text(
+                    text = sourceUrl,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = refresh,
+                    enabled = !busy && profile.sourceUrl != null,
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null)
+                    Spacer(Modifier.size(6.dp))
+                    Text("Update")
+                }
+                OutlinedButton(onClick = toggleNodes) {
+                    Icon(Icons.Default.ExpandMore, contentDescription = null)
+                    Spacer(Modifier.size(6.dp))
+                    Text("Nodes")
+                }
+                IconButton(onClick = delete, enabled = !busy) {
+                    Icon(Icons.Default.Delete, contentDescription = "Delete ${profile.name}")
+                }
+            }
+            SubscriptionLinks(metadata = profile.metadata, context = context)
+            if (expanded) {
+                HorizontalDivider()
+                profile.nodes.forEach { node ->
+                    SubscriptionNodeRow(node = node, saveNode = { saveNode(node) })
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionLinks(metadata: SubscriptionMetadata, context: Context) {
+    if (metadata.supportUrl == null && metadata.profileWebPageUrl == null) {
+        return
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        metadata.supportUrl?.let { url ->
+            OutlinedButton(onClick = { openExternalUrl(context, url) }) {
+                Icon(Icons.Default.OpenInNew, contentDescription = null)
+                Spacer(Modifier.size(6.dp))
+                Text("Support")
+            }
+        }
+        metadata.profileWebPageUrl?.let { url ->
+            OutlinedButton(onClick = { openExternalUrl(context, url) }) {
+                Icon(Icons.Default.OpenInNew, contentDescription = null)
+                Spacer(Modifier.size(6.dp))
+                Text("Profile page")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionNodeRow(node: SubscriptionNode, saveNode: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(node.name, fontWeight = FontWeight.Medium)
+        Text(
+            "${node.format.displayName} | ${node.suggestedCore?.displayName ?: "Unsupported"}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        OutlinedButton(onClick = saveNode) {
+            Text("Save as config")
+        }
+        HorizontalDivider()
+    }
+}
+
+@Composable
+private fun SubscriptionImportForm(
+    busy: Boolean,
+    checkSubscription: (String, String) -> Unit,
+    importSubscription: (String, String) -> Unit,
+) {
+    var url by rememberSaveable { mutableStateOf("") }
+    var rawText by rememberSaveable { mutableStateOf("") }
+    val clipboardManager = LocalClipboardManager.current
+
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Add Hysera subscription", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Use this mode for subscription links. For one VPN node, use Hysera Configs.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("Subscription URL") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = rawText,
+                onValueChange = { rawText = it },
+                label = { Text("Raw subscription text") },
+                minLines = 6,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            AssistChip(
+                onClick = {
+                    clipboardManager.getText()?.text?.let { clipboardText ->
+                        rawText = clipboardText
+                    }
+                },
+                label = { Text("Paste raw text from clipboard") },
+                leadingIcon = { Icon(Icons.Default.Download, contentDescription = null) },
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { checkSubscription(url, rawText) },
+                    enabled = !busy,
+                ) {
+                    Text("Проверить подписку")
+                }
+                Button(
+                    onClick = { importSubscription(url, rawText) },
+                    enabled = !busy,
+                ) {
+                    Text("Импортировать")
+                }
+            }
+            if (busy) {
+                Text("Hysera is loading subscription data...", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionPreviewCard(result: SubscriptionParseResult) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text("Subscription preview", style = MaterialTheme.typography.titleMedium)
+            Text("Title: ${result.metadata.profileTitle ?: "Untitled subscription"}")
+            Text("Valid nodes: ${result.validNodes.size}")
+            Text("Warnings: ${result.errors.size}")
+            result.metadata.announce?.let { Text("Announcement: $it") }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionUsage(userInfo: SubscriptionUserInfo?) {
+    if (userInfo == null) {
+        Text("Traffic: unavailable", style = MaterialTheme.typography.bodySmall)
+        return
+    }
+
+    val used = (userInfo.upload ?: 0L) + (userInfo.download ?: 0L)
+    Text(
+        "Upload: ${formatBytes(userInfo.upload)} | Download: ${formatBytes(userInfo.download)}",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "Used: ${formatBytes(used)} | Limit: ${formatTrafficLimit(userInfo.total)}",
+        style = MaterialTheme.typography.bodySmall,
+    )
+    Text(
+        "Expires: ${formatExpiration(userInfo.expire)}",
+        style = MaterialTheme.typography.bodySmall,
+    )
+}
+
+private fun formatBytes(value: Long?): String {
+    if (value == null) {
+        return "Unknown"
+    }
+    val units = listOf("B", "KB", "MB", "GB", "TB")
+    var amount = value.toDouble()
+    var unitIndex = 0
+    while (amount >= 1024 && unitIndex < units.lastIndex) {
+        amount /= 1024
+        unitIndex++
+    }
+    return if (unitIndex == 0) {
+        "$value ${units[unitIndex]}"
+    } else {
+        "%.1f %s".format(amount, units[unitIndex])
+    }
+}
+
+private fun formatTrafficLimit(total: Long?): String {
+    return when {
+        total == null -> "Unknown"
+        total == 0L -> "Unlimited"
+        else -> formatBytes(total)
+    }
+}
+
+private fun formatExpiration(expireUnixSeconds: Long?): String {
+    return if (expireUnixSeconds == null || expireUnixSeconds == 0L) {
+        "No expiration"
+    } else {
+        DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(expireUnixSeconds * 1000))
+    }
+}
+
+private fun formatOptionalDate(timestampMillis: Long?): String {
+    return timestampMillis?.let { timestamp ->
+        DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(timestamp))
+    } ?: "Never"
+}
+
+private fun openExternalUrl(context: Context, url: String) {
+    runCatching {
+        val uri = Uri.parse(url)
+        require(uri.scheme == "https" || uri.scheme == "http") {
+            "Only HTTPS or HTTP subscription links can be opened."
+        }
+        context.startActivity(Intent(Intent.ACTION_VIEW, uri))
+    }.onFailure { exception ->
+        EventLogger.error("Could not open subscription URL: ${exception.message}")
     }
 }
 

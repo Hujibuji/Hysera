@@ -44,7 +44,7 @@ jobs:
 
       - name: Build Hysera debug APK
         working-directory: Android
-        run: ./gradlew --no-daemon assembleDebug
+        run: ./gradlew --no-daemon testDebugUnitTest assembleDebug
 
       - name: Stage Hysera debug APK
         shell: bash

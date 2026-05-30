@@ -9,7 +9,7 @@ The primary VPN adapter is sing-box. Xray is the fallback adapter for configs, p
 Hysera already includes:
 
 - a Kotlin, Jetpack Compose, Material 3 Android application;
-- phone-friendly screens for connection status, saved configs, config entry, logs, and settings;
+- phone-friendly screens for connection status, saved configs, config entry, subscriptions, logs, and settings;
 - light and dark themes;
 - local config persistence for raw JSON and supported URI formats;
 - structural detection for sing-box JSON, Xray JSON, `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, and `hy2://`;
@@ -42,6 +42,35 @@ To start a build:
 4. Download the `Hysera-debug-apk` artifact after the job succeeds.
 
 The workflow builds `Android/app`, copies the resulting debug APK to `Release/Hysera-debug.apk`, uploads the artifact, and attempts to commit the generated APK back to `Release/`. Artifact upload still succeeds if repository branch protection prevents the bot commit.
+
+## Subscription support
+
+Hysera can import a subscription URL or raw subscription text from the **Hysera Subscriptions** screen. Subscription data is downloaded directly by the app and stored locally. Hysera does not send configs to third-party parsing services.
+
+Supported metadata header lines:
+
+- `#profile-update-interval`: refresh interval in hours, for example `#profile-update-interval: 1`;
+- `#profile-title`: subscription title;
+- `#subscription-userinfo`: `upload`, `download`, `total`, and Unix timestamp `expire` values;
+- `#support-url`: support link opened through an Android intent;
+- `#profile-web-page-url`: profile page link opened through an Android intent;
+- `#announce`: plain-text announcement;
+- `#announce: base64:...`: Base64-encoded UTF-8 announcement.
+
+Unknown `#` metadata fields and empty lines are ignored. A broken node does not reject the complete subscription: valid nodes are retained and parsing errors are written to **Hysera Logs**.
+
+VPN nodes after the metadata lines may use:
+
+- `vless://`;
+- `vmess://`;
+- `trojan://`;
+- `ss://`;
+- `hysteria2://`;
+- `hy2://`;
+- sing-box JSON;
+- Xray JSON.
+
+Use **Проверить подписку** to preview parsing results and **Импортировать** to save a subscription. Saved URL-based subscriptions have an **Update** button for manual refresh. The parsed `#profile-update-interval` value is stored with each profile; periodic WorkManager scheduling remains an explicit TODO and defaults conceptually to 24 hours when the metadata header is absent.
 
 ## Adding native cores
 
