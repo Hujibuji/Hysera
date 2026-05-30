@@ -59,7 +59,7 @@ class SubscriptionParser {
                     jsonBuffer = StringBuilder(rawLine)
                     jsonBraceBalance = braceDelta(rawLine)
                     if (jsonBraceBalance <= 0) {
-                        jsonBuffer?.let { addNode(it.toString()) }
+                        addNode(jsonBuffer.toString())
                         jsonBuffer = null
                     }
                 }

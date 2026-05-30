@@ -35,9 +35,9 @@ class SubscriptionParserTest {
         assertEquals(1, result.metadata.profileUpdateIntervalHours)
         assertEquals("https://t.me/example_support", result.metadata.supportUrl)
         assertEquals("https://example.com/profile", result.metadata.profileWebPageUrl)
-        assertEquals(12, result.metadata.userInfo?.download)
-        assertEquals(0, result.metadata.userInfo?.total)
-        assertEquals(2235340800, result.metadata.userInfo?.expire)
+        assertEquals(12L, result.metadata.userInfo?.download)
+        assertEquals(0L, result.metadata.userInfo?.total)
+        assertEquals(2235340800L, result.metadata.userInfo?.expire)
         assertEquals(5, result.nodes.size)
         assertEquals(4, result.validNodes.size)
         assertEquals(1, result.errors.size)
@@ -87,7 +87,7 @@ class SubscriptionParserTest {
         )
 
         assertNull(result.metadata.userInfo?.upload)
-        assertEquals(7, result.metadata.userInfo?.download)
+        assertEquals(7L, result.metadata.userInfo?.download)
         assertNull(result.metadata.userInfo?.expire)
     }
 }
