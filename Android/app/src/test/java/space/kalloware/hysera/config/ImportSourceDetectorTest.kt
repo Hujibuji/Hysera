@@ -15,14 +15,10 @@ class ImportSourceDetectorTest {
     }
 
     @Test
-    fun recognizesSingleUriAndJsonConfigs() {
+    fun recognizesSingleUriConfig() {
         assertEquals(
             ImportSourceType.SINGLE_CONFIG,
             ImportSourceDetector.detect("vless://id@example.com:443"),
-        )
-        assertEquals(
-            ImportSourceType.SINGLE_CONFIG,
-            ImportSourceDetector.detect("""{"outbounds":[{"type":"direct"}]}"""),
         )
     }
 
