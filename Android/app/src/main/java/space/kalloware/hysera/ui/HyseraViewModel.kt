@@ -7,8 +7,11 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import space.kalloware.hysera.config.ConfigDetector
 import space.kalloware.hysera.config.ConfigRepository
 import space.kalloware.hysera.config.CoreType
+import space.kalloware.hysera.config.ImportSourceDetector
+import space.kalloware.hysera.config.ImportSourceType
 import space.kalloware.hysera.config.SaveConfigResult
 import space.kalloware.hysera.logging.EventLogger
 import space.kalloware.hysera.subscription.SubscriptionNode
@@ -68,43 +71,54 @@ class HyseraViewModel(application: Application) : AndroidViewModel(application) 
         if (mutableSelectedConfigId.value == id) {
             mutableSelectedConfigId.value = repository.configs.value.firstOrNull()?.id
         }
+        showMessage("Config deleted.")
     }
 
-    fun checkSubscription(url: String, rawText: String) {
-        runSubscriptionOperation {
-            val subscriptionText = loadSubscriptionText(url, rawText) ?: return@runSubscriptionOperation
-            val result = subscriptionRepository.parse(subscriptionText)
-            mutableSubscriptionPreview.value = result
-            showMessage(
-                "Subscription check found ${result.validNodes.size} valid node(s) " +
-                    "and ${result.errors.size} warning(s).",
-            )
+    fun checkImport(rawInput: String) {
+        val input = rawInput.trim()
+        when (ImportSourceDetector.detect(input)) {
+            ImportSourceType.EMPTY -> showMessage("Paste a config, subscription URL, or raw subscription text.")
+            ImportSourceType.SINGLE_CONFIG -> {
+                mutableSubscriptionPreview.value = null
+                val detection = ConfigDetector.detect(input)
+                showMessage("Recognized ${detection.format.displayName}: ${detection.explanation}")
+            }
+
+            ImportSourceType.SUBSCRIPTION_URL -> runSubscriptionOperation {
+                val subscriptionText = subscriptionRepository.fetchText(input).fold(
+                    onSuccess = { it },
+                    onFailure = { exception ->
+                        val message = exception.message ?: "Could not download subscription."
+                        EventLogger.error("Subscription check failed: $message")
+                        showMessage(message)
+                        return@runSubscriptionOperation
+                    },
+                )
+                showSubscriptionPreview(subscriptionRepository.parse(subscriptionText))
+            }
+
+            ImportSourceType.RAW_SUBSCRIPTION -> {
+                showSubscriptionPreview(subscriptionRepository.parse(input))
+            }
+
+            ImportSourceType.UNKNOWN -> showUnsupportedInput()
         }
     }
 
-    fun importSubscription(url: String, rawText: String) {
-        runSubscriptionOperation {
-            val normalizedUrl = url.trim().takeIf(String::isNotBlank)
-            val result = if (rawText.isNotBlank()) {
-                subscriptionRepository.importText(normalizedUrl, rawText)
-            } else {
-                if (normalizedUrl == null) {
-                    showMessage("Paste a subscription URL or raw subscription text.")
-                    return@runSubscriptionOperation
-                }
-                subscriptionRepository.fetchAndImport(normalizedUrl)
+    fun importEntry(name: String, rawInput: String, preferredCore: CoreType) {
+        val input = rawInput.trim()
+        when (ImportSourceDetector.detect(input)) {
+            ImportSourceType.EMPTY -> showMessage("Paste a config, subscription URL, or raw subscription text.")
+            ImportSourceType.SINGLE_CONFIG -> saveConfig(name, input, preferredCore)
+            ImportSourceType.SUBSCRIPTION_URL -> runSubscriptionOperation {
+                handleSubscriptionResult(subscriptionRepository.fetchAndImport(input))
             }
 
-            when (result) {
-                is SubscriptionOperationResult.Success -> {
-                    mutableSubscriptionPreview.value = result.parseResult
-                    showMessage(
-                        "Imported '${result.profile.name}' with ${result.profile.nodes.size} node(s).",
-                    )
-                }
-
-                is SubscriptionOperationResult.Error -> showMessage(result.message)
+            ImportSourceType.RAW_SUBSCRIPTION -> runSubscriptionOperation {
+                handleSubscriptionResult(subscriptionRepository.importText(null, input))
             }
+
+            ImportSourceType.UNKNOWN -> showUnsupportedInput()
         }
     }
 
@@ -184,26 +198,32 @@ class HyseraViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private suspend fun loadSubscriptionText(url: String, rawText: String): String? {
-        if (rawText.isNotBlank()) {
-            return rawText
-        }
-
-        val normalizedUrl = url.trim()
-        if (normalizedUrl.isBlank()) {
-            showMessage("Paste a subscription URL or raw subscription text.")
-            return null
-        }
-
-        return subscriptionRepository.fetchText(normalizedUrl).fold(
-            onSuccess = { it },
-            onFailure = { exception ->
-                val message = exception.message ?: "Could not download subscription."
-                EventLogger.error("Subscription check failed: $message")
-                showMessage(message)
-                null
-            },
+    private fun showSubscriptionPreview(result: SubscriptionParseResult) {
+        mutableSubscriptionPreview.value = result
+        showMessage(
+            "Subscription check found ${result.validNodes.size} valid node(s) " +
+                "and ${result.errors.size} warning(s).",
         )
+    }
+
+    private fun handleSubscriptionResult(result: SubscriptionOperationResult) {
+        when (result) {
+            is SubscriptionOperationResult.Success -> {
+                mutableSubscriptionPreview.value = result.parseResult
+                showMessage(
+                    "Imported '${result.profile.name}' with ${result.profile.nodes.size} node(s).",
+                )
+            }
+
+            is SubscriptionOperationResult.Error -> showMessage(result.message)
+        }
+    }
+
+    private fun showUnsupportedInput() {
+        val message = "Unknown input. Paste JSON, a supported protocol:// URI, an HTTPS subscription URL, " +
+            "or raw subscription text."
+        EventLogger.error(message)
+        showMessage(message)
     }
 
     private companion object {

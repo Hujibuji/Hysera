@@ -9,7 +9,7 @@ The primary VPN adapter is sing-box. Xray is the fallback adapter for configs, p
 Hysera already includes:
 
 - a Kotlin, Jetpack Compose, Material 3 Android application;
-- phone-friendly screens for connection status, saved configs, config entry, subscriptions, logs, and settings;
+- phone-friendly screens for connection status, unified config and subscription management, logs, and settings;
 - light and dark themes;
 - local config persistence for raw JSON and supported URI formats;
 - structural detection for sing-box JSON, Xray JSON, `vless://`, `vmess://`, `trojan://`, `ss://`, `hysteria2://`, and `hy2://`;
@@ -45,7 +45,7 @@ The workflow builds `Android/app`, copies the resulting debug APK to `Release/Hy
 
 ## Subscription support
 
-Hysera can import a subscription URL or raw subscription text from the **Hysera Subscriptions** screen. Subscription data is downloaded directly by the app and stored locally. Hysera does not send configs to third-party parsing services.
+Hysera uses one importer on the **Hysera Configs** screen for standalone `protocol://` links, JSON configs, HTTP(S) subscription URLs, and raw subscription text. Subscription data is downloaded directly by the app and stored locally. Hysera does not send configs to third-party parsing services.
 
 Supported metadata header lines:
 
@@ -70,7 +70,7 @@ VPN nodes after the metadata lines may use:
 - sing-box JSON;
 - Xray JSON.
 
-Use **Проверить подписку** to preview parsing results and **Импортировать** to save a subscription. Saved URL-based subscriptions have an **Update** button for manual refresh. The parsed `#profile-update-interval` value is stored with each profile; periodic WorkManager scheduling remains an explicit TODO and defaults conceptually to 24 hours when the metadata header is absent.
+Use **Check input** to preview parsing results and **Import** to save a standalone config or subscription. Saved URL-based subscriptions have an **Update** button for manual refresh. Both standalone configs and saved subscription links have a visible **Delete** button. The parsed `#profile-update-interval` value is stored with each profile; periodic WorkManager scheduling remains an explicit TODO and defaults conceptually to 24 hours when the metadata header is absent.
 
 ## Adding native cores
 
